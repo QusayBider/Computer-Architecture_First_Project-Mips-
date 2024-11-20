@@ -1,0 +1,294 @@
+.data
+input_filename: .asciiz "project_input.txt" 
+newline: .asciiz "\n"
+buffer: .space 100 
+output_x: .asciiz "Coefficient of x: "
+output_y: .asciiz "Coefficient of y: "
+output_z: .asciiz "Coefficient of z: "
+output_const: .asciiz "Constant: "
+error_message: .asciiz "Error: Invalid equation format. Please enter an equation with exactly 2 or 3 variables (x, y, and optionally z) only.\n"
+menu_prompt: .asciiz "Choose output method: (f)ile, (s)creen, or (e)xit: "
+output_filename: .asciiz "output.txt"
+invalid_input_msg: .asciiz "Invalid input. Please choose (f)ile, (s)creen, or (e)xit.\n"
+
+.text
+.globl main
+
+main:
+    # Open the input file for reading
+    li $v0, 13 
+    la $a0, input_filename 
+    li $a1, 0 
+    syscall
+    move $t0, $v0  # File descriptor for input
+
+menu_loop:
+    # Display menu prompt
+    li $v0, 4
+    la $a0, menu_prompt
+    syscall
+    
+    # Get user choice
+    li $v0, 12
+    syscall
+    move $t4, $v0  # Store user choice
+
+    # Exit if user enters 'e' or 'E'
+    li $t5, 'e'
+    beq $t4, $t5, exit_program
+    li $t5, 'E'
+    beq $t4, $t5, exit_program
+
+    # Continue to read and process equations
+    j read_loop
+
+read_loop:
+    # Read a line from the input file
+    li $v0, 14 
+    move $a0, $t0 
+    la $a1, buffer 
+    li $a2, 100 
+    syscall
+
+    # Check if end of file (bytes read = 0)
+    beqz $v0, close_file 
+    
+# Print the read line (equation)
+    li $v0, 4 # Print string syscall
+    la $a0, buffer # Load address of the buffer
+    syscall
+    # Process the line (equation)
+    la $t1, buffer # Pointer to buffer
+    li $t9, 0 # Variable counter
+    li $t8, 0 # Invalid variable flag
+
+count_variables:
+    lb $t6, 0($t1) # Load current character from buffer
+    beqz $t6, check_count # End of string, go to count check
+
+    # Check if the character is 'x', 'y', or 'z'
+    li $t7, 'x'
+    beq $t6, $t7, increment_counter
+    li $t7, 'y'
+    beq $t6, $t7, increment_counter
+    li $t7, 'z'
+    beq $t6, $t7, increment_counter
+
+    # Check for invalid variable (any letter other than 'x', 'y', or 'z')
+    li $t7, 'a'
+    blt $t6, $t7, next_char_count # Ignore non-letter characters
+    li $t7, 'z'
+    bgt $t6, $t7, next_char_count
+    li $t8, 1 # Set flag if an invalid variable is found
+    j next_char_count
+
+increment_counter:
+    addi $t9, $t9, 1 # Increment variable counter
+    j next_char_count
+
+next_char_count:
+    addi $t1, $t1, 1 # Move to the next character
+    j count_variables
+
+check_count:
+    # Check if there were invalid variables or incorrect variable count (2 or 3)
+    bne $t8, $zero, print_error # If invalid variable found, print error
+    li $t7, 2
+    bne $t9, $t7, check_three_vars
+    j continue_parsing
+
+check_three_vars:
+    li $t7, 3
+    bne $t9, $t7, print_error # If not 2 or 3 variables, print error
+
+continue_parsing:
+    # Reset pointer for parsing after counting
+    la $t1, buffer
+
+    # Initialize parsing registers
+    li $t1, 0 # Accumulated coefficient
+    li $t2, 1 # Sign (1 for positive, -1 for negative)
+    li $s1, 0 # Coefficient of x
+    li $s2, 0 # Coefficient of y
+    li $s3, 0 # Coefficient of z
+    li $s4, 0 # Constant (RHS)
+    li $t5, 0 # Result flag (0 = LHS, 1 = RHS)
+
+parse_loop:
+    lb $t6, 0($t1) # Load current character from buffer
+    beqz $t6, end_parse # End if null character is found
+
+    # Check for '=' to switch to result side
+    beq $t6, '=', switch_to_result
+
+    # If on RHS, parse RHS value
+    beq $t5, 1, parse_rhs # If on RHS, parse the RHS result
+
+    # Check for signs (+ or -)
+    beq $t6, '+', set_positive
+    beq $t6, '-', set_negative
+
+    # Check if the current character is a digit (0-9)
+    li $t7, '0'
+    sub $t7, $t6, $t7
+    bltz $t7, check_var # Not a digit, check if it's a variable
+    li $t8, 9
+    bgt $t7, $t8, check_var # If greater than 9, not a digit
+
+    # Process digit, update accumulated coefficient
+    sub $t7, $t6, '0' # Convert ASCII to integer
+    mul $t1, $t1, 10 # Shift left by one decimal place
+    add $t1, $t1, $t7 # Add the new digit
+    j next_char
+
+check_var:
+    # Check if the character is 'x', 'y', or 'z'
+    li $t7, 'x'
+    beq $t6, $t7, store_x
+    li $t7, 'y'
+    beq $t6, $t7, store_y
+    li $t7, 'z'
+    beq $t6, $t7, store_z
+    j next_char # Skip other characters
+
+store_x:
+    beqz $t1, set_default_x # If coefficient is zero, set to 1
+    j store_x_normal
+
+set_default_x:
+    li $t1, 1 # Set default to 1
+    j store_x_normal
+
+store_x_normal:
+    mul $t1, $t1, $t2 # Apply sign
+    add $s1, $s1, $t1 # Update coefficient for x
+    j reset_coeff
+
+store_y:
+    beqz $t1, set_default_y # If coefficient is zero, set to 1
+    j store_y_normal
+
+set_default_y:
+    li $t1, 1 # Set default to 1
+    j store_y_normal
+
+store_y_normal:
+    mul $t1, $t1, $t2 # Apply sign
+    add $s2, $s2, $t1 # Update coefficient for y
+    j reset_coeff
+
+store_z:
+    beqz $t1, set_default_z # If coefficient is zero, set to 1
+    j store_z_normal
+
+set_default_z:
+    li $t1, 1 # Set default to 1
+    j store_z_normal
+
+store_z_normal:
+    mul $t1, $t1, $t2 # Apply sign
+    add $s3, $s3, $t1 # Update coefficient for z
+    j reset_coeff
+
+reset_coeff:
+    li $t1, 0 # Reset coefficient accumulator
+    li $t2, 1 # Reset sign to positive
+    j next_char
+
+set_positive:
+    li $t2, 1 # Set sign to positive
+    j next_char
+
+set_negative:
+    li $t2, -1 # Set sign to negative
+    j next_char
+
+switch_to_result:
+    li $t5, 1 # Set flag to indicate parsing RHS
+    addi $t1, $t1, 1 # Move past the '='
+    j parse_loop
+
+
+parse_rhs:
+    # Parse digits for RHS result
+    li $t7, '0'
+    sub $t7, $t6, $t7
+    bltz $t7, next_char       # Skip if not a digit
+    li $t8, 9
+    bgt $t7, $t8, next_char   # Skip if greater than 9
+
+    sub $t7, $t6, '0'         # Convert ASCII to integer
+    mul $s4, $s4, 10          # Shift left by one decimal place
+    add $s4, $s4, $t7         # Add the new digit
+    j next_char
+
+next_char:
+    addi $t1, $t1, 1          # Move to the next character
+    j parse_loop
+
+end_parse:
+    # Print coefficients and constant if no errors
+    li $v0, 4
+    la $a0, newline
+    syscall
+
+    # Print coefficient of x
+    li $v0, 4
+    la $a0, output_x
+    syscall
+    li $v0, 1
+    move $a0, $s1
+    syscall
+    li $v0, 4                 # Print newline after x
+    la $a0, newline
+    syscall
+
+    # Print coefficient of y
+    li $v0, 4
+    la $a0, output_y
+    syscall
+    li $v0, 1
+    move $a0, $s2
+    syscall
+    li $v0, 4                 # Print newline after y
+    la $a0, newline
+    syscall
+
+    # Print coefficient of z
+    li $v0, 4
+    la $a0, output_z
+    syscall
+    li $v0, 1
+    move $a0, $s3
+    syscall
+    li $v0, 4                 # Print newline after z
+    la $a0, newline
+    syscall
+
+    # Print the constant
+    li $v0, 4
+    la $a0, output_const
+    syscall
+    li $v0, 1
+    move $a0, $s4
+    syscall
+
+    # Continue reading the next line
+    j read_loop
+
+print_error:
+    # Print error message if invalid input
+    li $v0, 4                 # Print error message
+    la $a0, error_message
+    syscall
+
+close_file:
+    # Close the file before exiting
+    li $v0, 16                # Syscall for closing a file
+    move $a0, $t0             # File descriptor
+    syscall
+
+exit_program:
+    # Exit the program
+    li $v0, 10                # Exit syscall
+    syscall
